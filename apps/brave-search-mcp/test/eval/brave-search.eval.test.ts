@@ -61,16 +61,16 @@ describe('brave search mcp evals (vitest + openai)', () => {
     expect(evalTest.accuracy()).toBeGreaterThanOrEqual(EVAL_MIN_ACCURACY);
   }, TEST_TIMEOUT_MS);
 
-  it('multi-turn context: web search then video search', async () => {
+  it('multi-turn context stays on web search', async () => {
     const evalTest = new EvalTest({
-      name: 'brave-web-then-video',
+      name: 'brave-web-follow-up-routing',
       test: async (evalAgent) => {
         const r1 = await evalAgent.prompt('I am setting up a home espresso corner. Can you find a few beginner guides?');
         if (!r1.hasToolCall(TOOL_NAMES.web))
           return false;
 
-        const r2 = await evalAgent.prompt('Nice, can you find beginner espresso tutorial videos on the same topic?', { context: [r1] });
-        return r2.hasToolCall(TOOL_NAMES.video);
+        const r2 = await evalAgent.prompt('Now find a few official espresso machine cleaning guides from manufacturers.', { context: [r1] });
+        return r2.hasToolCall(TOOL_NAMES.web);
       },
     });
 
@@ -84,13 +84,13 @@ describe('brave search mcp evals (vitest + openai)', () => {
     expect(evalTest.accuracy()).toBeGreaterThanOrEqual(EVAL_MIN_ACCURACY);
   }, TEST_TIMEOUT_MS);
 
-  it('image search passes a string query argument', async () => {
+  it('web search passes a string query argument', async () => {
     const evalTest = new EvalTest({
-      name: 'brave-image-search-args',
+      name: 'brave-web-search-args',
       test: async (evalAgent) => {
-        const result = await evalAgent.prompt('I am making a travel mood board for Iceland. Can you find images of the northern lights there?');
-        const args = result.getToolArguments(TOOL_NAMES.image);
-        return result.hasToolCall(TOOL_NAMES.image) && typeof args?.query === 'string';
+        const result = await evalAgent.prompt('Find the official Node.js documentation for streams.');
+        const args = result.getToolArguments(TOOL_NAMES.web);
+        return result.hasToolCall(TOOL_NAMES.web) && typeof args?.query === 'string';
       },
     });
 

@@ -1,15 +1,10 @@
-import type { LocalWebFallbackExecutor, ToolLogger } from './tools/tool-helpers.js';
+import type { ToolLogger } from './tools/tool-helpers.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { BraveSearch } from 'brave-search';
 import packageJson from '../package.json' with { type: 'json' };
 import { registerUiSearchTools } from './server-ui.js';
-import { BraveImageSearchTool } from './tools/BraveImageSearchTool.js';
-import { BraveLLMContextSearchTool } from './tools/BraveLLMContextSearchTool.js';
-import { BraveLocalSearchTool } from './tools/BraveLocalSearchTool.js';
-import { BraveNewsSearchTool } from './tools/BraveNewsSearchTool.js';
-import { BraveVideoSearchTool } from './tools/BraveVideoSearchTool.js';
 import { BraveWebSearchTool } from './tools/BraveWebSearchTool.js';
 
 const DIST_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
@@ -29,12 +24,7 @@ interface StandardToolRegistrationTarget {
 }
 
 interface ServerTools {
-  image: BraveImageSearchTool;
   web: BraveWebSearchTool;
-  local: BraveLocalSearchTool;
-  news: BraveNewsSearchTool;
-  video: BraveVideoSearchTool;
-  llmContext: BraveLLMContextSearchTool;
 }
 
 export class BraveMcpServer {
@@ -43,19 +33,19 @@ export class BraveMcpServer {
 
   /**
    * Creates a new BraveMcpServer instance.
-   * @param braveSearchApiKey - The API key for Brave Search API
+   * @param braveSearchApiKey - One Brave Search API key or a list of keys for rotation
    * @param isUI - Whether to enable UI mode with widget resources
    * @param braveSearchInstance - Optional BraveSearch instance for dependency injection (useful for testing)
    */
   constructor(
-    braveSearchApiKey: string,
+    braveSearchApiKey: string | string[],
     isUI: boolean = false,
     braveSearchInstance?: BraveSearch,
   ) {
     this.server = new McpServer(
       {
         name: 'Brave Search MCP Server',
-        description: 'A server that provides tools for searching the web, images, videos, and local businesses using the Brave Search API.',
+        description: 'A server that provides a web search tool using the Brave Search API.',
         version: SERVER_VERSION,
       },
       {
@@ -70,21 +60,10 @@ export class BraveMcpServer {
     const log: ToolLogger = this.log.bind(this);
 
     // Keep tool creation inline so the server's main wiring stays easy to scan.
-    const image = new BraveImageSearchTool(log, braveSearch, isUI);
     const web = new BraveWebSearchTool(log, braveSearch, isUI);
-    const executeWebFallback: LocalWebFallbackExecutor = input => web.executeCore(input);
-    const local = new BraveLocalSearchTool(log, braveSearch, executeWebFallback, isUI);
-    const news = new BraveNewsSearchTool(log, braveSearch, isUI);
-    const video = new BraveVideoSearchTool(log, braveSearch, isUI);
-    const llmContext = new BraveLLMContextSearchTool(log, braveSearch, isUI);
 
     this.tools = {
-      image,
       web,
-      local,
-      news,
-      video,
-      llmContext,
     };
 
     this.registerConfiguredTools(isUI);
@@ -98,15 +77,9 @@ export class BraveMcpServer {
         log: this.log.bind(this),
         annotations: READ_ONLY_TOOL_ANNOTATIONS,
         tools: {
-          image: this.tools.image,
           web: this.tools.web,
-          local: this.tools.local,
-          news: this.tools.news,
-          video: this.tools.video,
         },
       });
-
-      this.registerStandardTool(this.tools.llmContext);
       return;
     }
 
@@ -115,14 +88,7 @@ export class BraveMcpServer {
   }
 
   private getStandardTools(): StandardToolRegistrationTarget[] {
-    return [
-      this.tools.image,
-      this.tools.web,
-      this.tools.local,
-      this.tools.news,
-      this.tools.video,
-      this.tools.llmContext,
-    ];
+    return [this.tools.web];
   }
 
   private registerStandardTool(tool: StandardToolRegistrationTarget): void {

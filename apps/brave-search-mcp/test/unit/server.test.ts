@@ -6,7 +6,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { beforeEach, describe, expect, it } from 'vitest';
 import packageJson from '../../package.json' with { type: 'json' };
 import { BraveMcpServer } from '../../src/server.js';
-import { TOOL_NAMES } from '../../src/tool-catalog.js';
+import { ENABLED_TOOL_NAMES, TOOL_NAMES } from '../../src/tool-catalog.js';
 import { createMockBraveSearch } from '../mocks/index.js';
 
 const ALL_UI_RESOURCE_URIS = [
@@ -30,31 +30,11 @@ const UI_RESOURCES = {
 };
 
 const { version: SERVER_VERSION } = packageJson;
-const allToolNames = Object.values(TOOL_NAMES);
+const allToolNames = ENABLED_TOOL_NAMES;
 const UI_TOOL_METADATA_EXPECTATIONS = {
-  [TOOL_NAMES.image]: {
-    invoking: 'Searching for images…',
-    invoked: 'Images found.',
-    widgetAccessible: false,
-  },
-  [TOOL_NAMES.news]: {
-    invoking: 'Searching for news…',
-    invoked: 'News articles found.',
-    widgetAccessible: true,
-  },
-  [TOOL_NAMES.video]: {
-    invoking: 'Searching for videos…',
-    invoked: 'Videos found.',
-    widgetAccessible: true,
-  },
   [TOOL_NAMES.web]: {
     invoking: 'Searching the web…',
     invoked: 'Search complete.',
-    widgetAccessible: true,
-  },
-  [TOOL_NAMES.local]: {
-    invoking: 'Searching local businesses…',
-    invoked: 'Places found.',
     widgetAccessible: true,
   },
 } as const;
@@ -64,16 +44,8 @@ describe('braveMcpServer', () => {
   let server: BraveMcpServer;
   const CHATGPT_MIME_TYPE = 'text/html+skybridge';
   const UI_RESOURCE_EXPECTATIONS = [
-    { uri: UI_RESOURCES.image.mcpApp, mimeType: RESOURCE_MIME_TYPE },
-    { uri: UI_RESOURCES.image.chatgpt, mimeType: CHATGPT_MIME_TYPE },
-    { uri: UI_RESOURCES.news.mcpApp, mimeType: RESOURCE_MIME_TYPE },
-    { uri: UI_RESOURCES.news.chatgpt, mimeType: CHATGPT_MIME_TYPE },
-    { uri: UI_RESOURCES.video.mcpApp, mimeType: RESOURCE_MIME_TYPE },
-    { uri: UI_RESOURCES.video.chatgpt, mimeType: CHATGPT_MIME_TYPE },
     { uri: UI_RESOURCES.web.mcpApp, mimeType: RESOURCE_MIME_TYPE },
     { uri: UI_RESOURCES.web.chatgpt, mimeType: CHATGPT_MIME_TYPE },
-    { uri: UI_RESOURCES.local.mcpApp, mimeType: RESOURCE_MIME_TYPE },
-    { uri: UI_RESOURCES.local.chatgpt, mimeType: CHATGPT_MIME_TYPE },
   ] as const;
 
   beforeEach(() => {
@@ -174,14 +146,14 @@ describe('braveMcpServer', () => {
 
         expect(resourceUris).toHaveLength(ALL_UI_RESOURCE_URIS.length);
         expect(resourceUris).toEqual(expect.arrayContaining(ALL_UI_RESOURCE_URIS));
-        expect(tools).toHaveLength(6);
+        expect(tools).toHaveLength(allToolNames.length);
 
         const uiTools = tools.filter((tool) => {
           const meta = tool._meta as Record<string, unknown> | undefined;
           const uiMeta = meta?.ui as { resourceUri?: string } | undefined;
           return typeof uiMeta?.resourceUri === 'string' && typeof meta?.['openai/outputTemplate'] === 'string';
         });
-        expect(uiTools).toHaveLength(5);
+        expect(uiTools).toHaveLength(allToolNames.length);
         expect(uiTools.map(tool => tool.name).sort()).toEqual(
           Object.keys(UI_TOOL_METADATA_EXPECTATIONS).sort(),
         );
@@ -264,7 +236,7 @@ describe('braveMcpServer', () => {
       try {
         expect(client.getServerVersion()).toEqual({
           name: 'Brave Search MCP Server',
-          description: 'A server that provides tools for searching the web, images, videos, and local businesses using the Brave Search API.',
+          description: 'A server that provides a web search tool using the Brave Search API.',
           version: SERVER_VERSION,
         });
       }

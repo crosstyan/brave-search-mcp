@@ -2,7 +2,7 @@
   "dxt_version": "0.1",
   "name": "brave-search-mcp",
   "version": "2.1.0",
-  "description": "MCP Server that uses Brave Search API to search for images, general web search, video, news and points of interest.",
+  "description": "MCP Server that uses the Brave Search API for general web search.",
   "author": {
     "name": "Mike Chao",
     "email": "mike.chao.one@gmail.com",
@@ -25,33 +25,12 @@
     {
       "name": "brave_web_search",
       "description": "Execute web searches using Brave's API"
-    },
-    {
-      "name": "brave_llm_context_search",
-      "description": "Extract relevant text snippets from web pages for deeper research and synthesis"
-    },
-    {
-      "name": "brave_image_search",
-      "description": "Get images from the web relevant to the query"
-    },
-    {
-      "name": "brave_news_search",
-      "description": "Searches the web for news"
-    },
-    {
-      "name": "brave_local_search",
-      "description": "Search for local businesses, services and points of interest"
-    },
-    {
-      "name": "brave_video_search",
-      "description": "Search the web for videos"
     }
   ],
   "keywords": [
     "brave search",
     "web search",
-    "image search",
-    "video search"
+    "mcp"
   ],
   "license": "GPL-3.0-or-later",
   "user_config": {

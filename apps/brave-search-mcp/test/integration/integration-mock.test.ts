@@ -1,6 +1,6 @@
 import { MCPClientManager } from '@mcpjam/sdk';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { TOOL_NAMES } from '../../src/tool-catalog.js';
+import { ENABLED_TOOL_NAMES, TOOL_NAMES } from '../../src/tool-catalog.js';
 
 /**
  * Integration tests for Brave Search MCP Server using MockBraveSearch.
@@ -13,7 +13,7 @@ import { TOOL_NAMES } from '../../src/tool-catalog.js';
 describe('brave search mcp server integration (mocked)', () => {
   let manager: MCPClientManager;
   const serverName = 'brave-search-mock';
-  const expectedToolNames = Object.values(TOOL_NAMES);
+  const expectedToolNames = ENABLED_TOOL_NAMES;
 
   beforeAll(async () => {
     manager = new MCPClientManager();
@@ -28,7 +28,7 @@ describe('brave search mcp server integration (mocked)', () => {
   });
 
   describe('tool registration', () => {
-    it('should have all 6 tools registered', async () => {
+    it('should expose only the web tool', async () => {
       const tools = await manager.listTools(serverName);
       const toolNames = tools.tools.map(t => t.name);
 
@@ -54,43 +54,6 @@ describe('brave search mcp server integration (mocked)', () => {
         // Should be text content
         expect(content[0].type).toBe('text');
       }
-    }, 30000);
-
-    it(`${TOOL_NAMES.image} should return mocked results`, async () => {
-      const result = await manager.executeTool(serverName, TOOL_NAMES.image, {
-        query: 'test image',
-        count: 3,
-      });
-
-      expect(result).toBeDefined();
-      expect('content' in result).toBe(true);
-      expect('isError' in result ? result.isError : false).not.toBe(true);
-      if ('content' in result) {
-        const content = result.content as Array<{ type: string; text?: string }>;
-        expect(content).toBeDefined();
-        expect(content[0]?.type).toBe('text');
-        expect(content[0]?.text).toContain('Title: Test Image 1');
-      }
-    }, 30000);
-
-    it(`${TOOL_NAMES.news} should return mocked results`, async () => {
-      const result = await manager.executeTool(serverName, TOOL_NAMES.news, {
-        query: 'test news',
-        count: 3,
-      });
-
-      expect(result).toBeDefined();
-      expect('content' in result).toBe(true);
-    }, 30000);
-
-    it(`${TOOL_NAMES.video} should return mocked results`, async () => {
-      const result = await manager.executeTool(serverName, TOOL_NAMES.video, {
-        query: 'test video',
-        count: 3,
-      });
-
-      expect(result).toBeDefined();
-      expect('content' in result).toBe(true);
     }, 30000);
   });
 });
