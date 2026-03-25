@@ -33,6 +33,9 @@ import type {
 
 const DEFAULT_POLLING_INTERVAL = 500;
 const DEFAULT_MAX_POLL_ATTEMPTS = 20;
+const DEFAULT_MAX_RATE_LIMIT_RETRIES = 3;
+const DEFAULT_RATE_LIMIT_RETRY_DELAY_MS = 1000;
+const DEFAULT_MAX_RATE_LIMIT_RETRY_DELAY_MS = 10000;
 
 /**
  * An error class specific to BraveSearch API interactions.
@@ -58,20 +61,28 @@ export class BraveSearchError extends Error {
  * It provides methods for web search, image search, local POI search, and summarization.
  */
 export class BraveSearch {
-  private apiKey: string;
+  private apiKeys: string[];
   private baseUrl = 'https://api.search.brave.com/res/v1';
   private pollInterval: number;
   private maxPollAttempts: number;
+  private maxRateLimitRetries: number;
+  private rateLimitRetryDelayMs: number;
+  private maxRateLimitRetryDelayMs: number;
+  private nextApiKeyIndex = 0;
 
   /**
    * Initializes a new instance of the BraveSearch class.
-   * @param apiKey The API key for accessing the Brave Search API.
+   * @param apiKey One API key or a list of API keys for accessing the Brave Search API.
+   * When multiple keys are provided, requests rotate across them.
    * @param options
    */
-  constructor(apiKey: string, options?: PollingOptions) {
-    this.apiKey = apiKey;
+  constructor(apiKey: string | string[], options?: PollingOptions) {
+    this.apiKeys = this.normalizeApiKeys(apiKey);
     this.pollInterval = options?.pollInterval ?? DEFAULT_POLLING_INTERVAL;
     this.maxPollAttempts = options?.maxPollAttempts ?? DEFAULT_MAX_POLL_ATTEMPTS;
+    this.maxRateLimitRetries = options?.maxRateLimitRetries ?? DEFAULT_MAX_RATE_LIMIT_RETRIES;
+    this.rateLimitRetryDelayMs = options?.rateLimitRetryDelayMs ?? DEFAULT_RATE_LIMIT_RETRY_DELAY_MS;
+    this.maxRateLimitRetryDelayMs = options?.maxRateLimitRetryDelayMs ?? DEFAULT_MAX_RATE_LIMIT_RETRY_DELAY_MS;
   }
 
   /**
@@ -199,12 +210,7 @@ export class BraveSearch {
   async localPoiSearch(ids: string[], signal?: AbortSignal): Promise<LocalPoiSearchApiResponse> {
     const url = `${this.baseUrl}/local/pois?${this.formatIdsQuery(ids)}`;
     try {
-      const response = await fetch(url, { headers: this.getHeaders(), signal });
-      if (!response.ok) {
-        const data = await response.json().catch(() => undefined);
-        throw this.buildApiError(response.status, response.statusText, data);
-      }
-      return response.json() as Promise<LocalPoiSearchApiResponse>;
+      return await this.requestJson<LocalPoiSearchApiResponse>(url, signal);
     }
     catch (error) {
       throw this.handleApiError(error);
@@ -222,12 +228,7 @@ export class BraveSearch {
   ): Promise<LocalDescriptionsSearchApiResponse> {
     const url = `${this.baseUrl}/local/descriptions?${this.formatIdsQuery(ids)}`;
     try {
-      const response = await fetch(url, { headers: this.getHeaders(), signal });
-      if (!response.ok) {
-        const data = await response.json().catch(() => undefined);
-        throw this.buildApiError(response.status, response.statusText, data);
-      }
-      return response.json() as Promise<LocalDescriptionsSearchApiResponse>;
+      return await this.requestJson<LocalDescriptionsSearchApiResponse>(url, signal);
     }
     catch (error) {
       throw this.handleApiError(error);
@@ -295,23 +296,42 @@ export class BraveSearch {
   ): Promise<T> {
     const fullUrl = `${url}?${new URLSearchParams(params)}`;
     try {
-      const response = await fetch(fullUrl, { headers: this.getHeaders(), signal });
-      if (!response.ok) {
-        const data = await response.json().catch(() => undefined);
-        throw this.buildApiError(response.status, response.statusText, data);
-      }
-      return response.json() as Promise<T>;
+      return await this.requestJson<T>(fullUrl, signal);
     }
     catch (error) {
       throw this.handleApiError(error);
     }
   }
 
-  private getHeaders(): Record<string, string> {
+  private async requestJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+    const requestStartIndex = this.getNextApiKeyStartIndex();
+
+    for (let attempt = 0; ; attempt++) {
+      const apiKey = this.getApiKeyForAttempt(requestStartIndex, attempt);
+      const response = await fetch(url, { headers: this.getHeaders(apiKey), signal });
+      if (response.ok) {
+        return response.json() as Promise<T>;
+      }
+
+      const data = await response.json().catch(() => undefined);
+      if (response.status === 429 && attempt < this.maxRateLimitRetries) {
+        const retryDelayMs = this.getRateLimitRetryDelayMs(
+          response.headers.get('retry-after'),
+          attempt,
+        );
+        await this.sleep(retryDelayMs, signal);
+        continue;
+      }
+
+      throw this.buildApiError(response.status, response.statusText, data);
+    }
+  }
+
+  private getHeaders(apiKey: string): Record<string, string> {
     return {
       'Accept': 'application/json',
       'Accept-Encoding': 'gzip',
-      'X-Subscription-Token': this.apiKey,
+      'X-Subscription-Token': apiKey,
     };
   }
 
@@ -329,6 +349,88 @@ export class BraveSearch {
 
   private formatIdsQuery(ids: string[]): string {
     return ids.map(id => `ids=${encodeURIComponent(id)}`).join('&');
+  }
+
+  private normalizeApiKeys(apiKey: string | string[]): string[] {
+    const apiKeys = (Array.isArray(apiKey) ? apiKey : [apiKey])
+      .flatMap(value => value.split(/[,\n]/))
+      .map(value => value.trim())
+      .filter(Boolean);
+
+    if (apiKeys.length === 0) {
+      throw new Error('At least one Brave Search API key is required');
+    }
+
+    return [...new Set(apiKeys)];
+  }
+
+  private getNextApiKeyStartIndex(): number {
+    const index = this.nextApiKeyIndex;
+    this.nextApiKeyIndex = (this.nextApiKeyIndex + 1) % this.apiKeys.length;
+    return index;
+  }
+
+  private getApiKeyForAttempt(requestStartIndex: number, attempt: number): string {
+    return this.apiKeys[(requestStartIndex + attempt) % this.apiKeys.length]!;
+  }
+
+  private getRateLimitRetryDelayMs(retryAfterHeader: string | null, attempt: number): number {
+    const retryAfterMs = this.parseRetryAfterMs(retryAfterHeader);
+    if (retryAfterMs !== null) {
+      return Math.min(retryAfterMs, this.maxRateLimitRetryDelayMs);
+    }
+
+    return Math.min(
+      this.rateLimitRetryDelayMs * (2 ** attempt),
+      this.maxRateLimitRetryDelayMs,
+    );
+  }
+
+  private parseRetryAfterMs(retryAfterHeader: string | null): number | null {
+    if (!retryAfterHeader) {
+      return null;
+    }
+
+    const retryAfterSeconds = Number(retryAfterHeader);
+    if (Number.isFinite(retryAfterSeconds)) {
+      return Math.max(0, retryAfterSeconds * 1000);
+    }
+
+    const retryAt = Date.parse(retryAfterHeader);
+    if (Number.isNaN(retryAt)) {
+      return null;
+    }
+
+    return Math.max(0, retryAt - Date.now());
+  }
+
+  private async sleep(delayMs: number, signal?: AbortSignal): Promise<void> {
+    if (delayMs <= 0) {
+      return;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+
+      const onAbort = () => {
+        if (timeout)
+          clearTimeout(timeout);
+        signal?.removeEventListener('abort', onAbort);
+        reject(signal?.reason ?? new Error('Request aborted'));
+      };
+
+      timeout = setTimeout(() => {
+        signal?.removeEventListener('abort', onAbort);
+        resolve();
+      }, delayMs);
+
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
   }
 
   /**

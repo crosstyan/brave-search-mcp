@@ -9,6 +9,8 @@ export const TOOL_NAMES = {
 
 export type ToolKey = keyof typeof TOOL_NAMES;
 
+export const ENABLED_TOOL_KEYS = ['web'] as const satisfies ToolKey[];
+
 export type WidgetToolVariant = Exclude<ToolKey, 'llmContext'>;
 
 const TOOL_MANIFEST_DESCRIPTIONS = {
@@ -20,7 +22,9 @@ const TOOL_MANIFEST_DESCRIPTIONS = {
   video: 'Search the web for videos',
 } as const satisfies Record<ToolKey, string>;
 
-export const MANIFEST_TOOL_ENTRIES = (Object.keys(TOOL_NAMES) as ToolKey[]).map(key => ({
+export const MANIFEST_TOOL_ENTRIES = ENABLED_TOOL_KEYS.map(key => ({
   name: TOOL_NAMES[key],
   description: TOOL_MANIFEST_DESCRIPTIONS[key],
 }));
+
+export const ENABLED_TOOL_NAMES = ENABLED_TOOL_KEYS.map(key => TOOL_NAMES[key]);

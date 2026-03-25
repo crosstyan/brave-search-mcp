@@ -1,6 +1,6 @@
 # Brave Search MCP Server
 
-An MCP Server implementation that integrates the [Brave Search API](https://brave.com/search/api/), providing, Web Search, Local Points of Interest Search, Video Search, Image Search, News Search and LLM Context Search capabilities
+An MCP Server implementation that integrates the [Brave Search API](https://brave.com/search/api/) and exposes web search.
 
 <a href="https://glama.ai/mcp/servers/@mikechao/brave-search-mcp">
   <img width="380" height="200" src="https://glama.ai/mcp/servers/@mikechao/brave-search-mcp/badge" alt="Brave Search MCP server" />
@@ -9,11 +9,8 @@ An MCP Server implementation that integrates the [Brave Search API](https://brav
 ## Features
 
 - **Web Search**: Perform a regular search on the web
-- **Image Search**: Search the web for images.
-- **News Search**: Search the web for news
-- **Video Search**: Search the web for videos
-- **Local Points of Interest Search**: Search for local physical locations, businesses, restaurants, services, etc
-- **LLM Context Search**: Fetch and extract full web page content optimized for reading and synthesizing sources
+- **Automatic 429 Retry**: Retries rate-limited Brave API requests automatically
+- **Multi-Key Rotation**: Rotates across multiple Brave API keys when configured
 
 ## Tools
 
@@ -30,64 +27,6 @@ An MCP Server implementation that integrates the [Brave Search API](https://brav
         - pm: Discovered within the last 31 Days.
         - py: Discovered within the last 365 Days
         - YYYY-MM-DDtoYYYY-MM-DD: Custom date range (e.g., 2022-04-01to2022-07-30)
-
-- **brave_image_search**
-  - Get images from the web relevant to the query
-  - Inputs:
-    - `query` (string): The term to search the internet for images of
-    - `count` (number, optional): The number of images to return (max 50, default 10)
-
-- **brave_news_search**
-  - Searches the web for news
-  - Inputs:
-    - `query` (string): The term to search the internet for news articles, trending topics, or recent events
-    - `count` (number, optional): The number of results to return (max 20, default 10)
-    - `offset` (number, optional, default 0): The zero-based offset for pagination (max 9)
-    - `freshness` (enum, optional): Filters search results by when they were discovered
-      - The following values are supported
-        - pd: Discovered within the last 24 hours.
-        - pw: Discovered within the last 7 Days.
-        - pm: Discovered within the last 31 Days.
-        - py: Discovered within the last 365 Days
-        - YYYY-MM-DDtoYYYY-MM-DD: Custom date range (e.g., 2022-04-01to2022-07-30)
-
-- **brave_local_search**
-  - Search for local businesses, services and points of interest
-  - Falls back to brave_web_search on the initial page if no location results are found
-  - Inputs:
-    - `query` (string): Local search term
-    - `count` (number, optional): The number of results to return (max 20, default 5)
-    - `offset` (number, optional, default 0): The zero-based offset for pagination (max 9)
-
-- **brave_video_search**
-  - Search the web for videos
-  - Inputs:
-    - `query`: (string): The term to search for videos
-    - `count`: (number, optional): The number of videos to return (max 20, default 10)
-    - `offset` (number, optional, default 0): The zero-based offset for pagination (max 9)
-    - `freshness` (enum, optional): Filters search results by when they were discovered
-      - The following values are supported
-        - pd: Discovered within the last 24 hours.
-        - pw: Discovered within the last 7 Days.
-        - pm: Discovered within the last 31 Days.
-        - py: Discovered within the last 365 Days
-        - YYYY-MM-DDtoYYYY-MM-DD: Custom date range (e.g., 2022-04-01to2022-07-30)
-
-- **brave_llm_context_search**
-  - Pre-extracted web content optimized for AI agents, LLM grounding, and RAG pipelines.
-  - Uses Brave's `balanced` context threshold mode in `compact` mode and disables Brave relevance filtering in `full` mode.
-  - Inputs:
-    - `query` (string): The search query. Maximum 400 characters and 50 words.
-    - `url` (string, optional): Optional URL to target. When provided, query and URL are combined for retrieval and only snippets from this exact URL are returned.
-    - `count` (number, optional, default 8): The maximum number of search results considered. Minimum 1, maximum 50.
-    - `maximumNumberOfUrls` (number, optional, default 8): The maximum number of URLs to include in the response. Minimum 1, maximum 50.
-    - `maximumNumberOfTokens` (number, optional, default 2048): The approximate maximum number of tokens in the returned context. Minimum 1024, maximum 32768.
-    - `maximumNumberOfSnippets` (number, optional, default 16): The maximum number of snippets across all URLs. Minimum 1, maximum 100.
-    - `maximumNumberOfTokensPerUrl` (number, optional, default 512): The maximum number of tokens per URL. Minimum 512, maximum 8192.
-    - `maximumNumberOfSnippetsPerUrl` (number, optional, default 2): The maximum number of snippets per URL. Minimum 1, maximum 100.
-    - `responseMode` (enum, optional, default `compact`): `compact` applies Brave's `balanced` relevance filtering plus local snippet filtering/truncation. `full` disables Brave's relevance filtering and returns raw snippets without local filtering or truncation.
-    - `maxSnippetChars` (number, optional, default 400): Maximum characters per snippet in compact mode. Minimum 80, maximum 4000.
-    - `maxOutputChars` (number, optional, default 8000): Approximate maximum serialized response size in compact mode. Minimum 1000, maximum 100000.
 
 ## OpenAI Apps & MCP Apps Support
 
@@ -139,7 +78,11 @@ There are two configuration modes:
 
 These settings are always read from the process environment, regardless of mode:
 
-- `BRAVE_API_KEY` (required): Brave Search API key.
+- `BRAVE_API_KEY` (required unless `BRAVE_API_KEYS` is set): Brave Search API key, or a comma-separated list of keys.
+- `BRAVE_API_KEYS` (optional): Alternative comma-separated or newline-separated list of Brave Search API keys.
+  - When multiple keys are configured, requests rotate across them and 429 retries advance to the next key.
+- `HTTP_PROXY` / `HTTPS_PROXY` (optional): Proxy URL used for outbound Brave API requests.
+  - The server applies these env vars at startup, so launching via something like `source ~/proxy.sh && npx -y brave-search-mcp --http` works.
 - `PORT` (optional): HTTP port (default: `3001`).
 - `HOST` (optional): Interface to bind to (default: `0.0.0.0`).
 - `BRAVE_MCP_CONFIG` (optional): Absolute or relative path to a TOML config file for feature settings.
@@ -165,6 +108,11 @@ Examples:
 ```bash
 # Local only
 HOST=127.0.0.1 ALLOWED_HOSTS=localhost,127.0.0.1 BRAVE_API_KEY="your_key_here" npx -y brave-search-mcp --http
+```
+
+```bash
+# Local with multiple Brave API keys
+BRAVE_API_KEY="key_one,key_two,key_three" npx -y brave-search-mcp --http
 ```
 
 ```bash

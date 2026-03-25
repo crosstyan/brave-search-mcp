@@ -2,7 +2,7 @@
   "name": "brave-search-mcp",
   "type": "module",
   "version": "2.1.0",
-  "description": "MCP Server that uses Brave Search API to search for images, general web search, video, news and points of interest.",
+  "description": "MCP Server that uses the Brave Search API for general web search.",
   "author": "mike.chao.one@gmail.com",
   "license": "GPL-3.0-or-later",
   "homepage": "https://github.com/mikechao/brave-search-mcp",

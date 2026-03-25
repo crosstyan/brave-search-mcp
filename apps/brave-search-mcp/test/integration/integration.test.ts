@@ -1,6 +1,6 @@
 import { MCPClientManager } from '@mcpjam/sdk';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { TOOL_NAMES } from '../../src/tool-catalog.js';
+import { ENABLED_TOOL_NAMES, TOOL_NAMES } from '../../src/tool-catalog.js';
 
 /**
  * Integration tests for Brave Search MCP Server using MCPJam SDK.
@@ -14,7 +14,7 @@ import { TOOL_NAMES } from '../../src/tool-catalog.js';
 describe('brave search mcp server integration', () => {
   let manager: MCPClientManager;
   const serverName = 'brave-search';
-  const expectedToolNames = Object.values(TOOL_NAMES);
+  const expectedToolNames = ENABLED_TOOL_NAMES;
 
   beforeAll(async () => {
     manager = new MCPClientManager();
@@ -38,37 +38,7 @@ describe('brave search mcp server integration', () => {
       expect(toolNames).toContain(TOOL_NAMES.web);
     });
 
-    it(`should have ${TOOL_NAMES.image} tool`, async () => {
-      const tools = await manager.listTools(serverName);
-      const toolNames = tools.tools.map(t => t.name);
-      expect(toolNames).toContain(TOOL_NAMES.image);
-    });
-
-    it(`should have ${TOOL_NAMES.news} tool`, async () => {
-      const tools = await manager.listTools(serverName);
-      const toolNames = tools.tools.map(t => t.name);
-      expect(toolNames).toContain(TOOL_NAMES.news);
-    });
-
-    it(`should have ${TOOL_NAMES.video} tool`, async () => {
-      const tools = await manager.listTools(serverName);
-      const toolNames = tools.tools.map(t => t.name);
-      expect(toolNames).toContain(TOOL_NAMES.video);
-    });
-
-    it(`should have ${TOOL_NAMES.local} tool`, async () => {
-      const tools = await manager.listTools(serverName);
-      const toolNames = tools.tools.map(t => t.name);
-      expect(toolNames).toContain(TOOL_NAMES.local);
-    });
-
-    it(`should have ${TOOL_NAMES.llmContext} tool`, async () => {
-      const tools = await manager.listTools(serverName);
-      const toolNames = tools.tools.map(t => t.name);
-      expect(toolNames).toContain(TOOL_NAMES.llmContext);
-    });
-
-    it('should have exactly 6 tools registered', async () => {
+    it('should have exactly 1 tool registered', async () => {
       const tools = await manager.listTools(serverName);
       const toolNames = tools.tools.map(t => t.name);
 
@@ -108,23 +78,6 @@ describe('brave search mcp server integration', () => {
         expect(content).toBeDefined();
         expect(content.length).toBeGreaterThan(0);
         expect(content[0].type).toBe('text');
-      }
-    }, 30000);
-
-    it(`${TOOL_NAMES.image} should return results for a query`, async () => {
-      const result = await manager.executeTool(serverName, TOOL_NAMES.image, {
-        query: 'cats',
-        count: 3,
-      });
-
-      expect(result).toBeDefined();
-      expect('content' in result).toBe(true);
-      expect('isError' in result ? result.isError : false).not.toBe(true);
-      if ('content' in result) {
-        const content = result.content as Array<{ type: string; text?: string }>;
-        expect(content).toBeDefined();
-        expect(content.length).toBeGreaterThan(0);
-        expect(content[0]?.type).toBe('text');
       }
     }, 30000);
   });

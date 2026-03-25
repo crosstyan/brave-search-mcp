@@ -126,9 +126,28 @@ export interface BraveSearchOptions {
 }
 
 /**
- * Options for configuring polling behavior when waiting for summary results from the Brave Search API.
+ * Options for configuring Brave Search client retry and polling behavior.
  */
 export interface PollingOptions {
+  /**
+   * Maximum number of retries after a 429 rate-limit response.
+   * @type {number}
+   * @default 3
+   */
+  maxRateLimitRetries?: number;
+  /**
+   * Base delay in milliseconds between automatic retries after a 429 response
+   * when the API does not provide a Retry-After header.
+   * @type {number}
+   * @default 1000
+   */
+  rateLimitRetryDelayMs?: number;
+  /**
+   * Maximum backoff delay in milliseconds for automatic retries after a 429 response.
+   * @type {number}
+   * @default 10000
+   */
+  maxRateLimitRetryDelayMs?: number;
   /**
    * Interval in milliseconds between polling attempts for summary.
    * @type {number}
