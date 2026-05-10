@@ -3,15 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockState = vi.hoisted(() => {
   return {
-    resolveRuntimeConfigMock: vi.fn(),
     startServerMock: vi.fn(),
     braveMcpServerMock: vi.fn(),
+    setGlobalProxyFromEnvMock: vi.fn(),
   };
 });
 
-vi.mock('../../src/config-loader.js', () => {
+vi.mock('node:http', () => {
   return {
-    resolveRuntimeConfig: mockState.resolveRuntimeConfigMock,
+    setGlobalProxyFromEnv: mockState.setGlobalProxyFromEnvMock,
   };
 });
 
@@ -27,16 +27,6 @@ vi.mock('../../src/server.js', () => {
   };
 });
 
-function createFeatureConfig() {
-  return {
-    auth: {},
-    audit: { enabled: false, logRaw: false },
-    policy: { redact: false },
-    guardrail: { windowSeconds: 0, cooldownSeconds: 0, requireJustification: false },
-    server: {},
-  };
-}
-
 async function importIndexModule() {
   await import('../../src/index.js');
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -45,115 +35,191 @@ async function importIndexModule() {
 describe('index entrypoint', () => {
   const originalArgv = [...process.argv];
   const originalApiKey = process.env.BRAVE_API_KEY;
+  const originalApiKeys = process.env.BRAVE_API_KEYS;
+  const originalWebSearchApiKey = process.env.BRAVE_WEB_SEARCH_API_KEY;
+  const originalWebSearchApiKeys = process.env.BRAVE_WEB_SEARCH_API_KEYS;
+  const originalHttpProxy = process.env.HTTP_PROXY;
+  const originalHttpsProxy = process.env.HTTPS_PROXY;
+  const originalHttpProxyLower = process.env.http_proxy;
+  const originalHttpsProxyLower = process.env.https_proxy;
 
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
     process.argv = ['node', 'index.js'];
     process.env.BRAVE_API_KEY = 'test-api-key';
+    delete process.env.BRAVE_API_KEYS;
+    delete process.env.BRAVE_WEB_SEARCH_API_KEY;
+    delete process.env.BRAVE_WEB_SEARCH_API_KEYS;
+    delete process.env.HTTP_PROXY;
+    delete process.env.HTTPS_PROXY;
+    delete process.env.http_proxy;
+    delete process.env.https_proxy;
 
-    mockState.resolveRuntimeConfigMock.mockReturnValue({
-      mode: 'env',
-      featureConfig: createFeatureConfig(),
-      ignoredEnvVars: [],
-      unknownKeys: [],
-      maskedForDisplay: createFeatureConfig(),
-    });
     mockState.startServerMock.mockResolvedValue(undefined);
-    mockState.braveMcpServerMock.mockImplementation(function (this: { serverInstance: McpServer }, apiKey: string, isUI: boolean, _braveSearch: unknown, featureConfig: unknown) {
-      this.serverInstance = { apiKey, isUI, featureConfig } as unknown as McpServer;
+    mockState.braveMcpServerMock.mockImplementation(function (
+      this: { serverInstance: McpServer },
+      apiKeys: { fullAccessKeys?: string[]; webSearchKeys?: string[] },
+      isUI: boolean,
+    ) {
+      this.serverInstance = { apiKeys, isUI } as unknown as McpServer;
     });
   });
 
   afterEach(() => {
     process.argv = [...originalArgv];
     process.env.BRAVE_API_KEY = originalApiKey;
+    process.env.BRAVE_API_KEYS = originalApiKeys;
+    process.env.BRAVE_WEB_SEARCH_API_KEY = originalWebSearchApiKey;
+    process.env.BRAVE_WEB_SEARCH_API_KEYS = originalWebSearchApiKeys;
+    process.env.HTTP_PROXY = originalHttpProxy;
+    process.env.HTTPS_PROXY = originalHttpsProxy;
+    process.env.http_proxy = originalHttpProxyLower;
+    process.env.https_proxy = originalHttpsProxyLower;
     vi.restoreAllMocks();
   });
 
-  it('passes createServer callback, http flag, and allowedHosts to startServer', async () => {
+  it('passes createServer callback and http flag to startServer', async () => {
     let capturedCreateServer: (() => McpServer) | undefined;
     let capturedHttpFlag: boolean | undefined;
-    let capturedOptions: { allowedHosts?: string[]; auth?: Record<string, unknown> } | undefined;
-    const featureConfig = {
-      ...createFeatureConfig(),
-      server: { allowedHosts: ['localhost'] },
-    };
-    mockState.resolveRuntimeConfigMock.mockReturnValue({
-      mode: 'env',
-      featureConfig,
-      ignoredEnvVars: [],
-      unknownKeys: [],
-      maskedForDisplay: featureConfig,
-    });
-    mockState.startServerMock.mockImplementation((createServer: () => McpServer, isHttp: boolean, options: { allowedHosts?: string[] }) => {
+    mockState.startServerMock.mockImplementation((createServer: () => McpServer, isHttp: boolean) => {
       capturedCreateServer = createServer;
       capturedHttpFlag = isHttp;
-      capturedOptions = options;
       return Promise.resolve();
     });
     process.argv = ['node', 'index.js', '--http', '--ui'];
 
     await importIndexModule();
 
-    expect(mockState.resolveRuntimeConfigMock).toHaveBeenCalledWith(expect.objectContaining({
-      env: process.env,
-      explicitConfigPath: undefined,
-      warn: expect.any(Function),
-    }));
+    expect(mockState.setGlobalProxyFromEnvMock).not.toHaveBeenCalled();
     expect(mockState.startServerMock).toHaveBeenCalledTimes(1);
     expect(capturedHttpFlag).toBe(true);
-    expect(capturedOptions).toEqual({ allowedHosts: ['localhost'], auth: featureConfig.auth });
     expect(capturedCreateServer).toBeTypeOf('function');
 
     const serverInstance = capturedCreateServer!();
-    expect(mockState.braveMcpServerMock).toHaveBeenCalledWith('test-api-key', true, undefined, featureConfig);
+    expect(mockState.braveMcpServerMock).toHaveBeenCalledWith(
+      { fullAccessKeys: ['test-api-key'] },
+      true,
+      undefined,
+      expect.any(Object),
+    );
     expect(serverInstance).toEqual({
-      apiKey: 'test-api-key',
+      apiKeys: { fullAccessKeys: ['test-api-key'] },
       isUI: true,
-      featureConfig,
     });
   });
 
-  it('prints masked config and exits before startup in check-config mode', async () => {
-    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    process.argv = ['node', 'index.js', '--check-config', '/tmp/config.toml'];
+  it('configures the global proxy when HTTP_PROXY is set', async () => {
+    process.env.HTTP_PROXY = 'http://127.0.0.1:7890';
 
     await importIndexModule();
 
-    expect(mockState.resolveRuntimeConfigMock).toHaveBeenCalledWith(expect.objectContaining({
-      explicitConfigPath: '/tmp/config.toml',
-    }));
-    expect(consoleLogSpy).toHaveBeenCalledWith(JSON.stringify(createFeatureConfig(), null, 2));
-    expect(mockState.startServerMock).not.toHaveBeenCalled();
-    expect(mockState.braveMcpServerMock).not.toHaveBeenCalled();
+    expect(mockState.setGlobalProxyFromEnvMock).toHaveBeenCalledTimes(1);
   });
 
-  it('logs and exits when BRAVE_API_KEY is missing', async () => {
+  it('passes multiple API keys to BraveMcpServer when configured', async () => {
+    let capturedCreateServer: (() => McpServer) | undefined;
+    mockState.startServerMock.mockImplementation((createServer: () => McpServer) => {
+      capturedCreateServer = createServer;
+      return Promise.resolve();
+    });
+    process.env.BRAVE_API_KEY = 'key-a, key-b';
+    process.env.BRAVE_API_KEYS = 'key-b\nkey-c';
+
+    await importIndexModule();
+
+    expect(mockState.setGlobalProxyFromEnvMock).not.toHaveBeenCalled();
+    const serverInstance = capturedCreateServer!();
+    expect(mockState.braveMcpServerMock).toHaveBeenCalledWith(
+      { fullAccessKeys: ['key-a', 'key-b', 'key-c'] },
+      false,
+      undefined,
+      expect.any(Object),
+    );
+    expect(serverInstance).toEqual({
+      apiKeys: { fullAccessKeys: ['key-a', 'key-b', 'key-c'] },
+      isUI: false,
+    });
+  });
+
+  it('passes web-only API keys to BraveMcpServer when configured', async () => {
+    let capturedCreateServer: (() => McpServer) | undefined;
+    mockState.startServerMock.mockImplementation((createServer: () => McpServer) => {
+      capturedCreateServer = createServer;
+      return Promise.resolve();
+    });
     delete process.env.BRAVE_API_KEY;
+    delete process.env.BRAVE_API_KEYS;
+    process.env.BRAVE_WEB_SEARCH_API_KEY = 'web-key-a, web-key-b';
+    process.env.BRAVE_WEB_SEARCH_API_KEYS = 'web-key-b\nweb-key-c';
+
+    await importIndexModule();
+
+    expect(mockState.setGlobalProxyFromEnvMock).not.toHaveBeenCalled();
+    const serverInstance = capturedCreateServer!();
+    expect(mockState.braveMcpServerMock).toHaveBeenCalledWith(
+      { webSearchKeys: ['web-key-a', 'web-key-b', 'web-key-c'] },
+      false,
+      undefined,
+      expect.any(Object),
+    );
+    expect(serverInstance).toEqual({
+      apiKeys: { webSearchKeys: ['web-key-a', 'web-key-b', 'web-key-c'] },
+      isUI: false,
+    });
+  });
+
+  it('passes both key pools to BraveMcpServer when mixed configuration is provided', async () => {
+    let capturedCreateServer: (() => McpServer) | undefined;
+    mockState.startServerMock.mockImplementation((createServer: () => McpServer) => {
+      capturedCreateServer = createServer;
+      return Promise.resolve();
+    });
+    process.env.BRAVE_API_KEY = 'full-key-a, full-key-b';
+    process.env.BRAVE_WEB_SEARCH_API_KEY = 'web-key-a';
+
+    await importIndexModule();
+
+    const serverInstance = capturedCreateServer!();
+    expect(mockState.braveMcpServerMock).toHaveBeenCalledWith(
+      {
+        fullAccessKeys: ['full-key-a', 'full-key-b'],
+        webSearchKeys: ['web-key-a'],
+      },
+      false,
+      undefined,
+      expect.any(Object),
+    );
+    expect(serverInstance).toEqual({
+      apiKeys: {
+        fullAccessKeys: ['full-key-a', 'full-key-b'],
+        webSearchKeys: ['web-key-a'],
+      },
+      isUI: false,
+    });
+  });
+
+  it('logs and exits when no Brave API keys are configured', async () => {
+    let capturedCreateServer: (() => McpServer) | undefined;
+    mockState.startServerMock.mockImplementation((createServer: () => McpServer) => {
+      capturedCreateServer = createServer;
+      return Promise.resolve();
+    });
+    delete process.env.BRAVE_API_KEY;
+    delete process.env.BRAVE_API_KEYS;
+    delete process.env.BRAVE_WEB_SEARCH_API_KEY;
+    delete process.env.BRAVE_WEB_SEARCH_API_KEYS;
+
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
 
     await importIndexModule();
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith('Error: BRAVE_API_KEY environment variable is required');
+    expect(capturedCreateServer).toBeUndefined();
+    expect(consoleErrorSpy).toHaveBeenCalledWith('Error: BRAVE_API_KEY, BRAVE_API_KEYS, BRAVE_WEB_SEARCH_API_KEY, or BRAVE_WEB_SEARCH_API_KEYS environment variable is required');
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(mockState.startServerMock).not.toHaveBeenCalled();
     expect(mockState.braveMcpServerMock).not.toHaveBeenCalled();
-  });
-
-  it('logs and exits when config resolution throws', async () => {
-    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
-    mockState.resolveRuntimeConfigMock.mockImplementation(() => {
-      throw new Error('Config error: guardrail.requestLimit must be a positive integer, got "abc"');
-    });
-
-    await importIndexModule();
-
-    expect(consoleErrorSpy).toHaveBeenCalledWith('Config error: guardrail.requestLimit must be a positive integer, got "abc"');
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(mockState.startServerMock).not.toHaveBeenCalled();
   });
 
   it('logs and exits when startServer rejects', async () => {
@@ -164,158 +230,7 @@ describe('index entrypoint', () => {
 
     await importIndexModule();
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith('startup failed');
+    expect(consoleErrorSpy).toHaveBeenCalledWith(startupError.message);
     expect(exitSpy).toHaveBeenCalledWith(1);
-  });
-
-  it('fails startup in http mode when requireAuth is enabled without an HTTP auth mechanism', async () => {
-    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
-    process.argv = ['node', 'index.js', '--http'];
-    mockState.resolveRuntimeConfigMock.mockReturnValue({
-      mode: 'env',
-      featureConfig: {
-        ...createFeatureConfig(),
-        auth: { requireAuth: true },
-      },
-      ignoredEnvVars: [],
-      unknownKeys: [],
-      maskedForDisplay: createFeatureConfig(),
-    });
-
-    await importIndexModule();
-
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      'Error: BRAVE_MCP_REQUIRE_AUTH=true requires one of auth.httpApiKey, auth.jwt, or auth.oauth when --http is used',
-    );
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(mockState.startServerMock).not.toHaveBeenCalled();
-  });
-
-  it('warns in stdio mode when HTTP auth config is present', async () => {
-    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    mockState.resolveRuntimeConfigMock.mockReturnValue({
-      mode: 'env',
-      featureConfig: {
-        ...createFeatureConfig(),
-        auth: { requireAuth: true, jwt: { jwksUri: 'https://idp.example.com/.well-known/jwks.json' } },
-      },
-      ignoredEnvVars: [],
-      unknownKeys: [],
-      maskedForDisplay: createFeatureConfig(),
-    });
-
-    await importIndexModule();
-
-    expect(consoleWarnSpy).toHaveBeenCalledWith('Warning: HTTP auth configuration is ignored in stdio mode');
-    expect(mockState.startServerMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('warns in http mode when both JWT and static API key auth are configured', async () => {
-    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    process.argv = ['node', 'index.js', '--http'];
-    mockState.resolveRuntimeConfigMock.mockReturnValue({
-      mode: 'env',
-      featureConfig: {
-        ...createFeatureConfig(),
-        auth: {
-          httpApiKey: 'legacy-api-key',
-          jwt: { jwksUri: 'https://idp.example.com/.well-known/jwks.json' },
-        },
-      },
-      ignoredEnvVars: [],
-      unknownKeys: [],
-      maskedForDisplay: createFeatureConfig(),
-    });
-
-    await importIndexModule();
-
-    expect(consoleWarnSpy).toHaveBeenCalledWith(
-      'Warning: auth.httpApiKey is ignored in HTTP mode because auth.jwt takes precedence',
-    );
-    expect(mockState.startServerMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('warns in http mode when OAuth takes precedence over JWT and static API key auth', async () => {
-    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    process.argv = ['node', 'index.js', '--http'];
-    mockState.resolveRuntimeConfigMock.mockReturnValue({
-      mode: 'env',
-      featureConfig: {
-        ...createFeatureConfig(),
-        auth: {
-          httpApiKey: 'legacy-api-key',
-          jwt: { jwksUri: 'https://idp.example.com/.well-known/jwks.json' },
-          oauth: { issuer: 'https://idp.example.com', verifyStrategy: 'jwks' },
-        },
-      },
-      ignoredEnvVars: [],
-      unknownKeys: [],
-      maskedForDisplay: createFeatureConfig(),
-    });
-
-    await importIndexModule();
-
-    expect(consoleWarnSpy).toHaveBeenCalledWith(
-      'Warning: auth.jwt is ignored in HTTP mode because auth.oauth takes precedence',
-    );
-    expect(consoleWarnSpy).toHaveBeenCalledWith(
-      'Warning: auth.httpApiKey is ignored in HTTP mode because auth.oauth takes precedence',
-    );
-    expect(mockState.startServerMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not warn in stdio mode when only callerId is configured', async () => {
-    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    mockState.resolveRuntimeConfigMock.mockReturnValue({
-      mode: 'env',
-      featureConfig: {
-        ...createFeatureConfig(),
-        auth: { callerId: 'ops-session-1' },
-      },
-      ignoredEnvVars: [],
-      unknownKeys: [],
-      maskedForDisplay: createFeatureConfig(),
-    });
-
-    await importIndexModule();
-
-    expect(consoleWarnSpy).not.toHaveBeenCalledWith('Warning: HTTP auth configuration is ignored in stdio mode');
-    expect(mockState.startServerMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('logs and exits when BraveMcpServer throws', async () => {
-    let capturedCreateServer: (() => McpServer) | undefined;
-    mockState.startServerMock.mockImplementation((createServer: () => McpServer) => {
-      capturedCreateServer = createServer;
-      return Promise.resolve();
-    });
-    const startupError = new Error('Policy file error: could not read "/bad/path.json": ENOENT');
-    // eslint-disable-next-line prefer-arrow-callback
-    mockState.braveMcpServerMock.mockImplementation(function () {
-      throw startupError;
-    });
-
-    await importIndexModule();
-
-    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
-
-    capturedCreateServer!();
-
-    expect(consoleErrorSpy).toHaveBeenCalledWith(`Error: Failed to start server: ${startupError.message}`);
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
-
-  it('rejects --check-config without a file path', async () => {
-    process.argv = ['node', 'index.js', '--check-config'];
-    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
-
-    await importIndexModule();
-
-    expect(consoleErrorSpy).toHaveBeenCalledWith('Error: --check-config requires a file path');
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(mockState.resolveRuntimeConfigMock).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,6 @@
 # Brave Search MCP Server
 
-An MCP Server implementation that integrates the [Brave Search API](https://brave.com/search/api/) and exposes web search.
+An MCP Server implementation that integrates the [Brave Search API](https://brave.com/search/api/) and exposes Brave web search, LLM context, image, news, local, and video tools.
 
 <a href="https://glama.ai/mcp/servers/@mikechao/brave-search-mcp">
   <img width="380" height="200" src="https://glama.ai/mcp/servers/@mikechao/brave-search-mcp/badge" alt="Brave Search MCP server" />
@@ -8,25 +8,19 @@ An MCP Server implementation that integrates the [Brave Search API](https://brav
 
 ## Features
 
-- **Web Search**: Perform a regular search on the web
+- **Full Brave Tool Set**: Web search, LLM context, image, news, local, and video search
 - **Automatic 429 Retry**: Retries rate-limited Brave API requests automatically
 - **Multi-Key Rotation**: Rotates across multiple Brave API keys when configured
+- **Split Key Pools**: Optionally dedicate a separate web-only key pool to `brave_web_search`
 
 ## Tools
 
-- **brave_web_search**
-  - Execute web searches using Brave's API
-  - Inputs:
-    - `query` (string): The term to search the internet for
-    - `count` (number, optional): The number of results to return (max 20, default 10)
-    - `offset` (number, optional, default 0): The offset for pagination
-    - `freshness` (enum, optional): Filters search results by when they were discovered
-      - The following values are supported
-        - pd: Discovered within the last 24 hours.
-        - pw: Discovered within the last 7 Days.
-        - pm: Discovered within the last 31 Days.
-        - py: Discovered within the last 365 Days
-        - YYYY-MM-DDtoYYYY-MM-DD: Custom date range (e.g., 2022-04-01to2022-07-30)
+- **brave_web_search**: Execute standard web searches using Brave's API
+- **brave_llm_context_search**: Retrieve ranked page snippets formatted for LLM consumption
+- **brave_image_search**: Search the web for images
+- **brave_news_search**: Search the web for news
+- **brave_local_search**: Search for local businesses, services and places
+- **brave_video_search**: Search the web for videos
 
 ## OpenAI Apps & MCP Apps Support
 
@@ -53,13 +47,13 @@ There is now support for [OpenAI Apps](https://developers.openai.com/apps-sdk/) 
 By default the MCP server runs in stdio mode.
 
 ```bash
-BRAVE_API_KEY="your_key_here" npx -y brave-search-mcp
+BRAVE_API_KEY="your_full_access_key" npx -y brave-search-mcp
 ```
 
 To enable Streamable HTTP mode:
 
 ```bash
-BRAVE_API_KEY="your_key_here" npx -y brave-search-mcp --http
+BRAVE_API_KEY="your_full_access_key" npx -y brave-search-mcp --http
 ```
 
 By default the server listens on port 3001.
@@ -78,9 +72,13 @@ There are two configuration modes:
 
 These settings are always read from the process environment, regardless of mode:
 
-- `BRAVE_API_KEY` (required unless `BRAVE_API_KEYS` is set): Brave Search API key, or a comma-separated list of keys.
-- `BRAVE_API_KEYS` (optional): Alternative comma-separated or newline-separated list of Brave Search API keys.
-  - When multiple keys are configured, requests rotate across them and 429 retries advance to the next key.
+- `BRAVE_API_KEY` / `BRAVE_API_KEYS` (optional, but at least one Brave key pool is required): Full-access Brave Search API key or key list for all tools.
+- `BRAVE_WEB_SEARCH_API_KEY` / `BRAVE_WEB_SEARCH_API_KEYS` (optional): Dedicated Brave Web Search key or key list for `brave_web_search` only.
+- When multiple keys are configured in either pool, requests rotate across them and 429 retries advance to the next key in that pool.
+- If both pools are configured:
+  - `brave_web_search` uses `BRAVE_WEB_SEARCH_API_KEY(S)`.
+  - `brave_image_search`, `brave_news_search`, `brave_local_search`, `brave_video_search`, and `brave_llm_context_search` use `BRAVE_API_KEY(S)`.
+- If only `BRAVE_WEB_SEARCH_API_KEY(S)` is configured, the server starts in web-only mode and registers only `brave_web_search`.
 - `HTTP_PROXY` / `HTTPS_PROXY` (optional): Proxy URL used for outbound Brave API requests.
   - The server applies these env vars at startup, so launching via something like `source ~/proxy.sh && npx -y brave-search-mcp --http` works.
 - `PORT` (optional): HTTP port (default: `3001`).
@@ -106,18 +104,28 @@ When `BRAVE_MCP_CONFIG` is not set, these feature env vars are supported:
 Examples:
 
 ```bash
-# Local only
-HOST=127.0.0.1 ALLOWED_HOSTS=localhost,127.0.0.1 BRAVE_API_KEY="your_key_here" npx -y brave-search-mcp --http
+# Local only with full-access keys
+HOST=127.0.0.1 ALLOWED_HOSTS=localhost,127.0.0.1 BRAVE_API_KEY="your_full_access_key" npx -y brave-search-mcp --http
 ```
 
 ```bash
-# Local with multiple Brave API keys
+# Web-only mode with a dedicated legacy or capped web-search key
+BRAVE_WEB_SEARCH_API_KEY="your_web_only_key" npx -y brave-search-mcp --http
+```
+
+```bash
+# Full-access pool with multiple Brave API keys
 BRAVE_API_KEY="key_one,key_two,key_three" npx -y brave-search-mcp --http
 ```
 
 ```bash
+# Mixed mode: web tool uses the dedicated web-only pool, all other tools use the full-access pool
+BRAVE_API_KEY="full_key_one,full_key_two" BRAVE_WEB_SEARCH_API_KEY="web_key_one,web_key_two" npx -y brave-search-mcp --http
+```
+
+```bash
 # Local with ngrok tunnel
-HOST=127.0.0.1 ALLOWED_HOSTS=localhost,127.0.0.1,my-app.ngrok-free.app BRAVE_API_KEY="your_key_here" npx -y brave-search-mcp --http --ui
+HOST=127.0.0.1 ALLOWED_HOSTS=localhost,127.0.0.1,my-app.ngrok-free.app BRAVE_API_KEY="your_full_access_key" npx -y brave-search-mcp --http --ui
 ```
 
 ### File mode (`BRAVE_MCP_CONFIG`)
@@ -198,7 +206,7 @@ Additional instructions [here](https://platform.openai.com/docs/guides/developer
 #### 2. Run the Brave Search MCP in HTTP mode and UI mode
 
 ```bash
-BRAVE_API_KEY="your_key_here" npx -y brave-search-mcp --http --ui
+BRAVE_API_KEY="your_full_access_key" npx -y brave-search-mcp --http --ui
 ```
 
 #### 3. Create a local tunnel to expose the MCP Server to ChatGPT

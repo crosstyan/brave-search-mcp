@@ -38,7 +38,7 @@ describe('brave search mcp server integration', () => {
       expect(toolNames).toContain(TOOL_NAMES.web);
     });
 
-    it('should have exactly 1 tool registered', async () => {
+    it('should have the full configured tool set registered', async () => {
       const tools = await manager.listTools(serverName);
       const toolNames = tools.tools.map(t => t.name);
 

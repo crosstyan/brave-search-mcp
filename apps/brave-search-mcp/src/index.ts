@@ -2,6 +2,8 @@
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { FeatureConfig } from './config-loader.js';
+import type { BraveApiKeyPoolConfig } from './server.js';
+import * as http from 'node:http';
 import process from 'node:process';
 import { validateTransportAuthConfig } from './auth/startup-validation.js';
 import { resolveRuntimeConfig } from './config-loader.js';
@@ -31,10 +33,58 @@ function parseCliOptions(argv: readonly string[]): CliOptions {
   };
 }
 
-function createServerFactory(apiKey: string, isUI: boolean, featureConfig: FeatureConfig): () => McpServer {
+function configureProxyFromEnv(): void {
+  const hasProxyEnv = [
+    process.env.HTTP_PROXY,
+    process.env.HTTPS_PROXY,
+    process.env.http_proxy,
+    process.env.https_proxy,
+  ].some(value => typeof value === 'string' && value.trim().length > 0);
+
+  if (!hasProxyEnv)
+    return;
+
+  const setGlobalProxyFromEnv = (http as typeof http & {
+    setGlobalProxyFromEnv?: () => void;
+  }).setGlobalProxyFromEnv;
+
+  if (typeof setGlobalProxyFromEnv === 'function') {
+    setGlobalProxyFromEnv();
+    return;
+  }
+
+  console.warn('Warning: HTTP_PROXY/HTTPS_PROXY is set, but this Node runtime does not support env-based global proxy configuration.');
+}
+
+function parseApiKeys(values: Array<string | undefined>): string[] {
+  return values
+    .filter((value): value is string => typeof value === 'string')
+    .flatMap(value => value.split(/[,\n]/))
+    .map(value => value.trim())
+    .filter(Boolean);
+}
+
+function getBraveApiKeyPools(): BraveApiKeyPoolConfig {
+  const fullAccessKeys = [...new Set(parseApiKeys([process.env.BRAVE_API_KEY, process.env.BRAVE_API_KEYS]))];
+  const webSearchKeys = [...new Set(parseApiKeys([
+    process.env.BRAVE_WEB_SEARCH_API_KEY,
+    process.env.BRAVE_WEB_SEARCH_API_KEYS,
+  ]))];
+
+  return {
+    ...(fullAccessKeys.length ? { fullAccessKeys } : {}),
+    ...(webSearchKeys.length ? { webSearchKeys } : {}),
+  };
+}
+
+function createServerFactory(
+  apiKeys: BraveApiKeyPoolConfig,
+  isUI: boolean,
+  featureConfig: FeatureConfig,
+): () => McpServer {
   return () => {
     try {
-      return new BraveMcpServer(apiKey, isUI, undefined, featureConfig).serverInstance;
+      return new BraveMcpServer(apiKeys, isUI, undefined, featureConfig).serverInstance;
     }
     catch (error) {
       console.error(`Error: Failed to start server: ${error instanceof Error ? error.message : String(error)}`);
@@ -57,9 +107,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  const braveApiKey = process.env.BRAVE_API_KEY;
-  if (!braveApiKey) {
-    console.error('Error: BRAVE_API_KEY environment variable is required');
+  configureProxyFromEnv();
+
+  const braveApiKeyPools = getBraveApiKeyPools();
+  if ((braveApiKeyPools.fullAccessKeys?.length ?? 0) === 0 && (braveApiKeyPools.webSearchKeys?.length ?? 0) === 0) {
+    console.error('Error: BRAVE_API_KEY, BRAVE_API_KEYS, BRAVE_WEB_SEARCH_API_KEY, or BRAVE_WEB_SEARCH_API_KEYS environment variable is required');
     process.exit(1);
     return;
   }
@@ -74,7 +126,7 @@ async function main(): Promise<void> {
   );
 
   await startServer(
-    createServerFactory(braveApiKey, cliOptions.isUI, runtimeConfig.featureConfig),
+    createServerFactory(braveApiKeyPools, cliOptions.isUI, runtimeConfig.featureConfig),
     cliOptions.isHttp,
     {
       allowedHosts: runtimeConfig.featureConfig.server.allowedHosts,

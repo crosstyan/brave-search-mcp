@@ -9,7 +9,7 @@ export const TOOL_NAMES = {
 
 export type ToolKey = keyof typeof TOOL_NAMES;
 
-export const ENABLED_TOOL_KEYS = ['web'] as const satisfies ToolKey[];
+export const ENABLED_TOOL_KEYS = ['web', 'llmContext', 'image', 'news', 'local', 'video'] as const satisfies ToolKey[];
 
 export type WidgetToolVariant = Exclude<ToolKey, 'llmContext'>;
 

@@ -31,7 +31,7 @@ export default defineConfig({
     sourcemap: isDevelopment ? 'inline' : undefined,
     cssMinify: !isDevelopment,
     minify: !isDevelopment,
-    rolldownOptions: {
+    rollupOptions: {
       input: inputPath,
     },
     outDir: path.resolve(process.cwd(), 'dist/ui'),

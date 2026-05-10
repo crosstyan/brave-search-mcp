@@ -1,5 +1,9 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ReadResourceResult } from '@modelcontextprotocol/sdk/types.js';
+import type { BraveImageSearchTool } from './tools/BraveImageSearchTool.js';
+import type { BraveLocalSearchTool } from './tools/BraveLocalSearchTool.js';
+import type { BraveNewsSearchTool } from './tools/BraveNewsSearchTool.js';
+import type { BraveVideoSearchTool } from './tools/BraveVideoSearchTool.js';
 import type { BraveWebSearchTool } from './tools/BraveWebSearchTool.js';
 import type { OpenAIWidgetCsp, ResourceCsp, UiSearchToolTarget, UiToolSpecConfig } from './ui-config.js';
 import fs from 'node:fs/promises';
@@ -23,7 +27,11 @@ type LogLevel
     | 'emergency';
 
 interface UiSearchTools {
+  image?: BraveImageSearchTool;
   web: BraveWebSearchTool;
+  local?: BraveLocalSearchTool;
+  news?: BraveNewsSearchTool;
+  video?: BraveVideoSearchTool;
 }
 
 interface RegisterUiSearchToolsOptions {

@@ -36,12 +36,26 @@ interface StandardToolRegistrationTarget {
 }
 
 interface ServerTools {
-  image: BraveImageSearchTool;
+  image?: BraveImageSearchTool;
   web: BraveWebSearchTool;
-  local: BraveLocalSearchTool;
-  news: BraveNewsSearchTool;
-  video: BraveVideoSearchTool;
-  llmContext: BraveLLMContextSearchTool;
+  local?: BraveLocalSearchTool;
+  news?: BraveNewsSearchTool;
+  video?: BraveVideoSearchTool;
+  llmContext?: BraveLLMContextSearchTool;
+}
+
+export interface BraveApiKeyPoolConfig {
+  fullAccessKeys?: string[];
+  webSearchKeys?: string[];
+}
+
+export interface BraveSearchInstanceConfig {
+  fullAccess?: BraveSearch;
+  webSearch?: BraveSearch;
+}
+
+function getBraveSearchApiKeyConfig(apiKeys: string[]): string | string[] {
+  return apiKeys.length === 1 ? apiKeys[0]! : apiKeys;
 }
 
 export class BraveMcpServer {
@@ -51,20 +65,24 @@ export class BraveMcpServer {
 
   /**
    * Creates a new BraveMcpServer instance.
-   * @param braveSearchApiKey - The API key for Brave Search API
+   * @param apiKeys - Optional key pools for full-access tools and the public web-search tool
    * @param isUI - Whether to enable UI mode with widget resources
-   * @param braveSearchInstance - Optional BraveSearch instance for dependency injection (useful for testing)
+   * @param braveSearchInstances - Optional BraveSearch instances for dependency injection (useful for testing)
+   * @param featureConfig - Runtime policy, guardrail, audit, auth, and server configuration
    */
   constructor(
-    braveSearchApiKey: string,
+    apiKeys: BraveApiKeyPoolConfig,
     isUI: boolean = false,
-    braveSearchInstance?: BraveSearch,
+    braveSearchInstances?: BraveSearchInstanceConfig,
     featureConfig: FeatureConfig = createDefaultFeatureConfig(),
   ) {
+    const hasFullAccessTools = (apiKeys.fullAccessKeys?.length ?? 0) > 0 || Boolean(braveSearchInstances?.fullAccess);
     this.server = new McpServer(
       {
         name: 'Brave Search MCP Server',
-        description: 'A server that provides tools for searching the web, images, videos, and local businesses using the Brave Search API.',
+        description: hasFullAccessTools
+          ? 'A server that provides tools for searching the web, images, videos, and local businesses using the Brave Search API.'
+          : 'A server that provides a web search tool using the Brave Search API.',
         version: SERVER_VERSION,
       },
       {
@@ -75,54 +93,54 @@ export class BraveMcpServer {
       },
     );
 
-    const braveSearch = braveSearchInstance ?? new BraveSearch(braveSearchApiKey);
+    const fullAccessSearch = braveSearchInstances?.fullAccess
+      ?? (apiKeys.fullAccessKeys?.length
+        ? new BraveSearch(getBraveSearchApiKeyConfig(apiKeys.fullAccessKeys))
+        : undefined);
+    const webSearch = braveSearchInstances?.webSearch
+      ?? (apiKeys.webSearchKeys?.length
+        ? new BraveSearch(getBraveSearchApiKeyConfig(apiKeys.webSearchKeys))
+        : fullAccessSearch);
+
+    if (!webSearch)
+      throw new Error('At least one Brave Search client must be configured');
+
     this.featureConfig = featureConfig;
     const log: ToolLogger = this.log.bind(this);
     const activeInterceptors = this.buildInterceptors();
+    const web = new BraveWebSearchTool(log, webSearch, isUI, activeInterceptors);
 
-    // Keep tool creation inline so the server's main wiring stays easy to scan.
-    const image = new BraveImageSearchTool(log, braveSearch, isUI, activeInterceptors);
-    const web = new BraveWebSearchTool(log, braveSearch, isUI, activeInterceptors);
-    const executeWebFallback: LocalWebFallbackExecutor = input =>
-      executeTool({
-        toolName: web.name,
-        input,
-        executeCore: value => web.executeCore(value),
-        buildErrorResult: (_value, error) => buildToolErrorResult(web.name, error),
-        interceptors: activeInterceptors,
-        isFallback: true,
-      });
-    const local = new BraveLocalSearchTool(log, braveSearch, executeWebFallback, isUI, activeInterceptors);
-    const news = new BraveNewsSearchTool(log, braveSearch, isUI, activeInterceptors);
-    const video = new BraveVideoSearchTool(log, braveSearch, isUI, activeInterceptors);
-    const llmContext = new BraveLLMContextSearchTool(log, braveSearch, isUI, activeInterceptors);
+    this.tools = { web };
 
-    this.tools = {
-      image,
-      web,
-      local,
-      news,
-      video,
-      llmContext,
-    };
+    if (fullAccessSearch) {
+      const image = new BraveImageSearchTool(log, fullAccessSearch, isUI, activeInterceptors);
+      const fullAccessWeb = new BraveWebSearchTool(log, fullAccessSearch, isUI, activeInterceptors);
+      const executeWebFallback: LocalWebFallbackExecutor = input =>
+        executeTool({
+          toolName: fullAccessWeb.name,
+          input,
+          executeCore: value => fullAccessWeb.executeCore(value),
+          buildErrorResult: (_value, error) => buildToolErrorResult(fullAccessWeb.name, error),
+          interceptors: activeInterceptors,
+          isFallback: true,
+        });
+      const local = new BraveLocalSearchTool(log, fullAccessSearch, executeWebFallback, isUI, activeInterceptors);
+      const news = new BraveNewsSearchTool(log, fullAccessSearch, isUI, activeInterceptors);
+      const video = new BraveVideoSearchTool(log, fullAccessSearch, isUI, activeInterceptors);
+      const llmContext = new BraveLLMContextSearchTool(log, fullAccessSearch, isUI, activeInterceptors);
+
+      this.tools = { image, web, local, news, video, llmContext };
+    }
 
     this.registerConfiguredTools(isUI);
   }
 
   private buildInterceptors(): readonly ToolInterceptor[] {
-    // Interceptor order matters: policy → guardrail → audit.
-    // - Policy runs first so denied queries never consume quota.
-    // - Guardrail runs second so rate-limited requests are still audited.
-    // - Audit runs last and is the only interceptor with a before() justification gate;
-    //   a request blocked earlier in the chain skips that gate. This means policy-denied
-    //   requests do not require a justification — intentional, since they are already
-    //   rejected on stronger grounds.
     const interceptors: ToolInterceptor[] = [];
     const policyFile = this.featureConfig.policy.file;
     if (policyFile) {
       const rules = loadPolicyRulesSync(policyFile);
-      const redactMode = this.featureConfig.policy.redact;
-      interceptors.push(new QueryPolicyInterceptor(rules, redactMode));
+      interceptors.push(new QueryPolicyInterceptor(rules, this.featureConfig.policy.redact));
     }
     const requestLimit = this.featureConfig.guardrail.requestLimit;
     if (requestLimit !== undefined) {
@@ -133,12 +151,11 @@ export class BraveMcpServer {
       }));
     }
     const auditLoggingEnabled = this.featureConfig.audit.enabled;
-    const logRawInputs = this.featureConfig.audit.logRaw;
     const requireJustification = this.featureConfig.guardrail.requireJustification;
     if (auditLoggingEnabled || requireJustification) {
       interceptors.push(new AuditLoggingInterceptor({
         auditLoggingEnabled,
-        logRawInputs,
+        logRawInputs: this.featureConfig.audit.logRaw,
         requireJustification,
       }));
     }
@@ -147,21 +164,22 @@ export class BraveMcpServer {
 
   private registerConfiguredTools(isUI: boolean): void {
     if (isUI) {
+      const uiTools = {
+        web: this.tools.web,
+        ...(this.tools.image ? { image: this.tools.image } : {}),
+        ...(this.tools.local ? { local: this.tools.local } : {}),
+        ...(this.tools.news ? { news: this.tools.news } : {}),
+        ...(this.tools.video ? { video: this.tools.video } : {}),
+      };
       registerUiSearchTools({
         server: this.server,
         distDir: DIST_DIR,
         log: this.log.bind(this),
         annotations: READ_ONLY_TOOL_ANNOTATIONS,
-        tools: {
-          image: this.tools.image,
-          web: this.tools.web,
-          local: this.tools.local,
-          news: this.tools.news,
-          video: this.tools.video,
-        },
+        tools: uiTools,
       });
-
-      this.registerStandardTool(this.tools.llmContext);
+      if (this.tools.llmContext)
+        this.registerStandardTool(this.tools.llmContext);
       return;
     }
 
@@ -171,12 +189,12 @@ export class BraveMcpServer {
 
   private getStandardTools(): StandardToolRegistrationTarget[] {
     return [
-      this.tools.image,
+      ...(this.tools.image ? [this.tools.image] : []),
       this.tools.web,
-      this.tools.local,
-      this.tools.news,
-      this.tools.video,
-      this.tools.llmContext,
+      ...(this.tools.local ? [this.tools.local] : []),
+      ...(this.tools.news ? [this.tools.news] : []),
+      ...(this.tools.video ? [this.tools.video] : []),
+      ...(this.tools.llmContext ? [this.tools.llmContext] : []),
     ];
   }
 
@@ -200,9 +218,6 @@ export class BraveMcpServer {
     message: string,
     level: 'error' | 'debug' | 'info' | 'notice' | 'warning' | 'critical' | 'alert' | 'emergency' = 'info',
   ): void {
-    this.server.server.sendLoggingMessage({
-      level,
-      data: message,
-    });
+    this.server.server.sendLoggingMessage({ level, data: message });
   }
 }

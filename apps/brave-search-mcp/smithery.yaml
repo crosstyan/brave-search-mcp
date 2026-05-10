@@ -2,14 +2,15 @@ startCommand:
   type: stdio
   configSchema:
     type: object
-    require:
-      - braveapikey
     properties:
       braveapikey:
         type: string
-        description: The API key for Brave Search.
+        description: Optional full-access Brave Search API key or comma-separated key list for all tools.
+      bravewebsearchapikey:
+        type: string
+        description: Optional Brave Web Search-only API key or comma-separated key list for brave_web_search.
   commandFunction:
     |-
-      (config) => ({ command: 'node', args: ['dist/index.js'], env: { BRAVE_API_KEY: config.braveapikey } })
+      (config) => ({ command: 'node', args: ['dist/index.js'], env: { BRAVE_API_KEY: config.braveapikey, BRAVE_WEB_SEARCH_API_KEY: config.bravewebsearchapikey } })
   exampleConfig:
     braveapikey: YOUR_API_KEY_HERE
