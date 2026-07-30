@@ -5,6 +5,7 @@ import type { FeatureConfig } from './config-loader.js';
 import type { BraveApiKeyPoolConfig } from './server.js';
 import * as http from 'node:http';
 import process from 'node:process';
+import { EnvHttpProxyAgent, setGlobalDispatcher } from 'undici';
 import { validateTransportAuthConfig } from './auth/startup-validation.js';
 import { resolveRuntimeConfig } from './config-loader.js';
 import { startServer } from './server-utils.js';
@@ -53,7 +54,7 @@ function configureProxyFromEnv(): void {
     return;
   }
 
-  console.warn('Warning: HTTP_PROXY/HTTPS_PROXY is set, but this Node runtime does not support env-based global proxy configuration.');
+  setGlobalDispatcher(new EnvHttpProxyAgent());
 }
 
 function parseApiKeys(values: Array<string | undefined>): string[] {

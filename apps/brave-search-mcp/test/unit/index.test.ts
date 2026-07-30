@@ -6,12 +6,31 @@ const mockState = vi.hoisted(() => {
     startServerMock: vi.fn(),
     braveMcpServerMock: vi.fn(),
     setGlobalProxyFromEnvMock: vi.fn(),
+    envHttpProxyAgentMock: vi.fn(),
+    setGlobalDispatcherMock: vi.fn(),
+    supportsNativeProxy: true,
   };
 });
 
 vi.mock('node:http', () => {
   return {
-    setGlobalProxyFromEnv: mockState.setGlobalProxyFromEnvMock,
+    get setGlobalProxyFromEnv() {
+      return mockState.supportsNativeProxy
+        ? mockState.setGlobalProxyFromEnvMock
+        : undefined;
+    },
+  };
+});
+
+vi.mock('undici', () => {
+  return {
+    EnvHttpProxyAgent: class {
+      constructor() {
+        mockState.envHttpProxyAgentMock();
+        return { dispatcher: 'env-proxy' };
+      }
+    },
+    setGlobalDispatcher: mockState.setGlobalDispatcherMock,
   };
 });
 
@@ -55,6 +74,7 @@ describe('index entrypoint', () => {
     delete process.env.HTTPS_PROXY;
     delete process.env.http_proxy;
     delete process.env.https_proxy;
+    mockState.supportsNativeProxy = true;
 
     mockState.startServerMock.mockResolvedValue(undefined);
     mockState.braveMcpServerMock.mockImplementation(function (
@@ -115,6 +135,18 @@ describe('index entrypoint', () => {
     await importIndexModule();
 
     expect(mockState.setGlobalProxyFromEnvMock).toHaveBeenCalledTimes(1);
+    expect(mockState.setGlobalDispatcherMock).not.toHaveBeenCalled();
+  });
+
+  it('configures an env proxy dispatcher when the Node runtime lacks native proxy support', async () => {
+    const proxyDispatcher = { dispatcher: 'env-proxy' };
+    mockState.supportsNativeProxy = false;
+    process.env.HTTPS_PROXY = 'http://127.0.0.1:7890';
+
+    await importIndexModule();
+
+    expect(mockState.envHttpProxyAgentMock).toHaveBeenCalledTimes(1);
+    expect(mockState.setGlobalDispatcherMock).toHaveBeenCalledWith(proxyDispatcher);
   });
 
   it('passes multiple API keys to BraveMcpServer when configured', async () => {

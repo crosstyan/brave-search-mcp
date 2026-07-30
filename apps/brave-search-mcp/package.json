@@ -90,6 +90,7 @@
     "preact": "^10.28.4",
     "smol-toml": "^1.6.1",
     "snarkdown": "^2.0.0",
+    "undici": "^7.24.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
